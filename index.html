@@ -66,6 +66,15 @@ main{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;oversc
 .btn.mint{background:var(--mint);color:#fff}
 .btn.ghost{background:transparent;border:1.5px solid var(--line)}
 .btn.danger{background:transparent;border:1.5px solid var(--bad);color:var(--bad)}
+.btn.danger-solid{background:var(--bad);color:#fff}
+.card.danger-zone{margin-top:36px;border:1.5px solid color-mix(in srgb,var(--bad) 45%,transparent)}
+.card.danger-zone h3{color:var(--bad)}
+.lose{background:var(--surface);border-radius:14px;padding:10px 14px;margin:0 0 12px}
+.lose div{padding:6px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px}
+.lose div:last-child{border-bottom:0}
+.lose b{white-space:nowrap}
+.warn-box{background:var(--yel-soft);border-radius:14px;padding:12px;margin:0 0 14px}
+.warn-box p{margin:0 0 10px}
 .btn.block{display:flex;width:100%}
 .btn:disabled{opacity:.45}
 .btn+.btn.block,.btn.block+.btn{margin-top:8px}
@@ -289,7 +298,7 @@ body.sheet-open .toast{bottom:calc(env(safe-area-inset-bottom) + 90px)}
 
 <script>
 'use strict';
-var APP_VERSION = '1.0.2';
+var APP_VERSION = '1.1.0';
 var DB_NAME = 'crane-get-zukan';       // 残業メモと混ざらない専用の保存場所
 var BACKUP_APP_ID = 'crane-get-zukan';
 var MACHINES = ['フック', '橋渡し', '3本爪', '2本爪', 'たこ焼き', 'その他'];
@@ -725,6 +734,9 @@ function renderSettings(v) {
     '<section class="card"><h3>古い写真を軽くする</h3><p class="set-desc">1年以上前の写真を小さめの画質にして、容量を空けます。記録の文字はそのまま残ります。書き出し済みのバックアップの写真は元の画質のままです。</p>' +
     '<div class="set-row"><span>対象の写真</span><b>' + olds.length + '枚</b></div>' +
     '<button class="btn ghost block" data-act="compress"' + (olds.length ? '' : ' disabled') + ' style="margin-top:10px">軽くする</button></section>' +
+
+    '<section class="card danger-zone"><h3>初期状態に戻す</h3><p class="set-desc">記録・写真・設定をすべて消して、ホーム画面に追加したばかりの状態に戻します。消したものは元に戻せません。</p>' +
+    '<button class="btn danger block" data-act="reset">初期状態に戻す</button></section>' +
 
     '<p class="version">ゲット図鑑 バージョン ' + APP_VERSION + '</p>';
 
@@ -1239,6 +1251,56 @@ async function applyRestore(z, data, onProg) {
   return c;
 }
 
+/* ===== 初期状態に戻す ===== */
+var RESET_WORD = 'けす';
+function openReset() {
+  var photoN = records.filter(function (r) { return r.hasPhoto; }).length, unsaved = unsavedCount();
+  var body =
+    '<div class="remind">' +
+    '<p class="remind-lead">アプリを初期状態に戻します</p>' +
+    '<p>ホーム画面に追加したばかりの状態に戻ります。次のものが<b>すべて消え、元に戻せません</b>。</p>' +
+    '<div class="lose">' +
+    '<div><span>記録</span><b>' + records.length + '件</b></div>' +
+    '<div><span>写真</span><b>' + photoN + '枚</b></div>' +
+    '<div><span>よく行くお店</span><b>' + favShops().length + '件</b></div>' +
+    '<div><span>月の予算や、お知らせなどの設定</span><b>すべて</b></div>' +
+    '</div>' +
+    '<p class="hint" style="margin-top:0">ホーム画面のアイコン、「ファイル」アプリなどに保存したバックアップ、ほかのアプリの記録は消えません。</p>' +
+    (unsaved ? '<div class="warn-box"><p>まだバックアップしていない記録が <b>' + unsaved + '件</b> あります。消す前に、バックアップをとっておくことをおすすめします。</p><button class="btn primary block" id="rsBackup">先にバックアップする</button></div>' : '') +
+    '<div class="field"><label for="rsWord">消してよければ、下の欄に「' + RESET_WORD + '」と入力してください</label><input type="text" class="inp" id="rsWord" autocomplete="off" autocapitalize="off" enterkeyhint="done" placeholder="' + RESET_WORD + '"></div>' +
+    '</div>';
+  openSheet('初期状態に戻す', body,
+    '<button class="btn danger-solid block" id="rsDo" disabled>すべて消して初期状態に戻す</button>' +
+    '<button class="btn ghost block" data-close>やめる</button>');
+  var inp = $('#rsWord'), btn = $('#rsDo');
+  function check() { btn.disabled = inp.value.trim() !== RESET_WORD; }
+  inp.addEventListener('input', check); inp.addEventListener('compositionend', check); inp.addEventListener('change', check);
+  if ($('#rsBackup')) $('#rsBackup').addEventListener('click', function () { openReminder(); });
+  btn.addEventListener('click', function () { if (inp.value.trim() === RESET_WORD) runReset(); });
+}
+async function runReset() {
+  sheet.dataset.lock = '1';
+  setSheetBody('<div class="prog"><p>消しています…</p></div>', '');
+  try {
+    if (db) { db.close(); db = null; }
+    await new Promise(function (res, rej) {
+      var r = indexedDB.deleteDatabase(DB_NAME);
+      r.onsuccess = function () { res(); };
+      r.onerror = function () { rej(r.error || new Error('消せませんでした')); };
+      r.onblocked = function () { setTimeout(res, 1500); };
+    });
+  } catch (e) {
+    delete sheet.dataset.lock;
+    setSheetBody('<p class="warn-text">うまく消せませんでした</p><p class="hint">' + esc(errMsg(e)) + '</p><p class="hint">アプリを一度閉じてから、もう一度お試しください。</p>', '<button class="btn block" id="rsReload">開き直す</button>');
+    $('#rsReload').addEventListener('click', function () { location.reload(); });
+    return;
+  }
+  thumbCache.forEach(function (u) { URL.revokeObjectURL(u); }); thumbCache.clear();
+  setSheetBody('<div class="remind"><p class="remind-lead ok-text">初期状態に戻しました</p><p>記録・写真・設定をすべて消しました。下のボタンを押すと、はじめから使えます。</p></div>',
+    '<button class="btn primary block" id="rsReload">はじめから使う</button>');
+  $('#rsReload').addEventListener('click', function () { location.reload(); });
+}
+
 /* ===== 古い写真を軽くする ===== */
 async function runCompress() {
   var ts = oldPhotoTargets();
@@ -1320,6 +1382,7 @@ document.addEventListener('click', function (e) {
   else if (act === 'backup') openBackupSheet(a.dataset.kind);
   else if (act === 'restore') $('#restoreFile').click();
   else if (act === 'compress') runCompress();
+  else if (act === 'reset') openReset();
 });
 $('#btnAdd').addEventListener('click', function () { openForm(null); });
 document.addEventListener('keydown', function (e) {
