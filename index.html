@@ -298,7 +298,7 @@ body.sheet-open .toast{bottom:calc(env(safe-area-inset-bottom) + 90px)}
 
 <script>
 'use strict';
-var APP_VERSION = '1.1.1';
+var APP_VERSION = '1.1.2';
 var DB_NAME = 'crane-get-zukan';       // 残業メモと混ざらない専用の保存場所
 var BACKUP_APP_ID = 'crane-get-zukan';
 var MACHINES = ['フック', '橋渡し', '3本爪', '2本爪', 'たこ焼き', 'その他'];
@@ -1059,7 +1059,7 @@ async function shareBackupFile(res, dlLink) {
   var canFile = false;
   try { canFile = !!(navigator.canShare && navigator.share && navigator.canShare({ files: [res.file] })); } catch (e) {}
   if (!canFile) { dlLink.click(); return null; }
-  try { await navigator.share({ files: [res.file], title: res.name }); return true; }
+  try { await navigator.share({ files: [res.file] }); return true; }
   catch (e) {
     if (e && e.name === 'AbortError') toast('保存をやめました');
     else toast('保存の画面を開けませんでした。下のリンクを試してください');
