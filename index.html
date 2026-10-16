@@ -184,6 +184,11 @@ main{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;oversc
 .stepper output{min-width:64px;text-align:center;font-size:20px;font-weight:800}
 
 /* 詳細 */
+.row3{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:8px}
+.share-preview{display:block;max-width:100%;max-height:48vh;width:auto;margin:0 auto;border-radius:14px;box-shadow:0 4px 18px rgba(80,40,60,.18);background:var(--surface2);min-height:200px}
+.share-opts{background:var(--surface);border-radius:14px;padding:4px 14px;margin-top:14px}
+.share-opts .switch-row{padding:10px 0;border-bottom:1px solid var(--line)}
+.share-opts .switch-row:last-child{border-bottom:0}
 .detail-photo{border-radius:16px;overflow:hidden;background:var(--surface2);min-height:120px;display:grid;place-items:center}
 .detail-photo img{width:100%;max-height:62vh;object-fit:contain;display:block}
 .detail-photo .ph{width:100%;aspect-ratio:4/3;font-size:64px}
@@ -299,7 +304,7 @@ body.sheet-open .toast{bottom:calc(env(safe-area-inset-bottom) + 90px)}
 
 <script>
 'use strict';
-var APP_VERSION = '1.1.5';
+var APP_VERSION = '1.2.0';
 var DB_NAME = 'crane-get-zukan';       // 残業メモと混ざらない専用の保存場所
 var BACKUP_APP_ID = 'crane-get-zukan';
 var MACHINES = ['フック', '橋渡し', '3本爪', '2本爪', 'たこ焼き', 'その他'];
@@ -363,7 +368,7 @@ function dbGet(store, key) { return reqP(db.transaction(store).objectStore(store
 function dbAll(store) { return reqP(db.transaction(store).objectStore(store).getAll()); }
 function dbWrite(stores, fn) { var t = db.transaction(stores, 'readwrite'); fn(t); return doneP(t); }
 
-var settings = { budget: 0, lastBackupAt: 0, lastDeleteAt: 0, lastShop: '', lastMachine: '', backupRemind: true, remindSnoozeUntil: 0, favShops: [] };
+var settings = { budget: 0, lastBackupAt: 0, lastDeleteAt: 0, lastShop: '', lastMachine: '', backupRemind: true, remindSnoozeUntil: 0, favShops: [], shareCost: true, shareShop: false };
 function loadSettings() { return dbAll('settings').then(function (all) { all.forEach(function (s) { settings[s.key] = s.value; }); }); }
 function saveSetting(key, value) { settings[key] = value; return dbWrite(['settings'], function (t) { t.objectStore('settings').put({ key: key, value: value }); }); }
 
@@ -647,6 +652,7 @@ function renderStats(v) {
     '<div class="kpi"><div class="k">1個に平均</div><div class="v">' + (avgPlays ? (Math.round(avgPlays * 10) / 10) + '<span>プレイ</span>' : '—') + '</div></div>' +
     '</div>' +
     (failed ? '<div class="hint-line">取れなかった挑戦 ' + failed + '回（' + yen(rs.filter(function (r) { return !r.got; }).reduce(function (a, r) { return a + (r.cost || 0); }, 0)) + '円）も金額に含めています</div>' : '') +
+    (s.mode === 'month' && got.length ? '<button class="btn mint block" style="margin-top:10px" data-act="share-month" data-ym="' + ymKey(s.y, s.m) + '">この月のまとめを画像で共有</button>' : '') +
     '<section class="card"><h3>月ごとの金額とゲット数</h3>' + chart + '<div class="chart-note">棒の高さが使った金額、上の数字がゲット数です</div></section>' +
     groupTable('お店別の成績', groupBy(rs, function (r) { return r.shop; })) +
     groupTable('台の種類別の成績', groupBy(rs, function (r) { return r.machine; })) +
@@ -943,7 +949,10 @@ function openDetail(id) {
     '<dt>台の種類</dt><dd>' + (esc(r.machine) || '—') + '</dd><dt>使った金額</dt><dd>' + yen(r.cost) + '円</dd>' +
     '<dt>プレイ回数</dt><dd>' + (r.plays ? r.plays + '回' : '—') + '</dd>' +
     (r.memo ? '<dt>メモ</dt><dd class="memo">' + esc(r.memo) + '</dd>' : '') + '</dl>';
-  openSheet('記録の詳細', body, '<div class="row2"><button class="btn danger" id="dDel">削除</button><button class="btn primary" id="dEdit">編集する</button></div>');
+  openSheet('記録の詳細', body, r.got
+    ? '<div class="row3"><button class="btn danger" id="dDel">削除</button><button class="btn mint" id="dShare">共有</button><button class="btn primary" id="dEdit">編集する</button></div>'
+    : '<div class="row2"><button class="btn danger" id="dDel">削除</button><button class="btn primary" id="dEdit">編集する</button></div>');
+  if ($('#dShare')) $('#dShare').addEventListener('click', function () { openShareSheet('item', r); });
   sheetCleanup = function () { alive = false; if (photoURL) URL.revokeObjectURL(photoURL); };
   if (r.hasPhoto) {
     dbGet('photos', r.id).then(function (p) {
@@ -964,6 +973,224 @@ function openDetail(id) {
     saveSetting('lastDeleteAt', Date.now()).catch(function () {});
     closeSheet(); render(); toast('削除しました');
   });
+}
+
+/* ===== 画像にして共有 ===== */
+var SHARE_FONT = '-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Noto Sans CJK JP", sans-serif';
+var SC = { bg: '#fff6ef', ink: '#2b2340', sub: '#7a6f86', pri: '#ff5c7a', pri2: '#ff8a5c', yel: '#ffc93c', white: '#ffffff', line: '#efe2d8' };
+function sFont(w, size) { return w + ' ' + size + 'px ' + SHARE_FONT; }
+function rrect(c, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  c.beginPath(); c.moveTo(x + r, y); c.lineTo(x + w - r, y); c.quadraticCurveTo(x + w, y, x + w, y + r);
+  c.lineTo(x + w, y + h - r); c.quadraticCurveTo(x + w, y + h, x + w - r, y + h); c.lineTo(x + r, y + h);
+  c.quadraticCurveTo(x, y + h, x, y + h - r); c.lineTo(x, y + r); c.quadraticCurveTo(x, y, x + r, y); c.closePath();
+}
+function drawCover(c, img, x, y, w, h) {
+  var iw = img.naturalWidth, ih = img.naturalHeight, k = Math.max(w / iw, h / ih), sw = w / k, sh = h / k;
+  c.drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, x, y, w, h);
+}
+// 日本語を1文字ずつ見て、幅に収まるよう行を分ける（はみ出す最後の行は…で省略）
+var NO_START = '、。，．・：；？！）」』】〕〉》ーぁぃぅぇぉっゃゅょァィゥェォッャュョ…!?)]}';
+var NO_END = '（「『【〔〈《([{';
+function wrapLines(c, text, maxW, maxLines) {
+  var lines = [], cur = '';
+  for (var i = 0; i < text.length; i++) {
+    var ch = text[i];
+    if (c.measureText(cur + ch).width > maxW && cur) {
+      var carry = '';
+      if (NO_START.indexOf(ch) >= 0 && cur.length > 1) { carry = cur.slice(-1); cur = cur.slice(0, -1); }   // 行頭に来ないよう前の1文字ごと次の行へ
+      while (cur.length > 1 && NO_END.indexOf(cur.slice(-1)) >= 0) { carry = cur.slice(-1) + carry; cur = cur.slice(0, -1); }  // 開きかっこは次の行へ
+      lines.push(cur); cur = carry + ch; if (lines.length === maxLines) break;
+    }
+    else cur += ch;
+  }
+  if (lines.length < maxLines) lines.push(cur);
+  else {
+    var last = lines[maxLines - 1];
+    while (last && c.measureText(last + '…').width > maxW) last = last.slice(0, -1);
+    lines[maxLines - 1] = last + '…';
+  }
+  return lines.filter(function (l) { return l !== ''; });
+}
+function fitText(c, text, maxW) {
+  if (c.measureText(text).width <= maxW) return text;
+  while (text && c.measureText(text + '…').width > maxW) text = text.slice(0, -1);
+  return text + '…';
+}
+function drawBackground(c, W, H) {
+  c.fillStyle = SC.bg; c.fillRect(0, 0, W, H);
+  c.fillStyle = 'rgba(255,92,122,0.10)'; c.beginPath(); c.arc(W - 40, 40, 220, 0, Math.PI * 2); c.fill();
+  c.fillStyle = 'rgba(255,201,60,0.16)'; c.beginPath(); c.arc(30, H - 30, 200, 0, Math.PI * 2); c.fill();
+}
+function drawBrand(c, x, y) {
+  c.save();
+  var g = c.createLinearGradient(x, y, x + 64, y + 64); g.addColorStop(0, SC.pri); g.addColorStop(1, SC.pri2);
+  c.fillStyle = g; rrect(c, x, y, 64, 64, 18); c.fill();
+  c.strokeStyle = '#fff'; c.lineWidth = 5; c.lineCap = 'round';
+  c.beginPath(); c.moveTo(x + 32, y + 9); c.lineTo(x + 32, y + 20); c.stroke();
+  c.fillStyle = '#fff'; rrect(c, x + 21, y + 19, 22, 10, 4); c.fill();
+  c.beginPath(); c.moveTo(x + 24, y + 29); c.quadraticCurveTo(x + 15, y + 38, x + 21, y + 49); c.stroke();
+  c.beginPath(); c.moveTo(x + 40, y + 29); c.quadraticCurveTo(x + 49, y + 38, x + 43, y + 49); c.stroke();
+  c.fillStyle = SC.yel; c.beginPath(); c.arc(x + 32, y + 47, 7, 0, Math.PI * 2); c.fill();
+  c.fillStyle = SC.ink; c.font = sFont(800, 36); c.textBaseline = 'middle'; c.fillText('ゲット図鑑', x + 80, y + 33);
+  c.restore();
+}
+function drawPlaceholder(c, r, x, y, w, h, rad) {
+  var hue = hueOf(r.name || r.shop);
+  c.save(); rrect(c, x, y, w, h, rad); c.clip();
+  c.fillStyle = 'hsl(' + hue + ' 70% 86%)'; c.fillRect(x, y, w, h);
+  c.fillStyle = 'hsl(' + hue + ' 45% 40%)'; c.font = sFont(800, Math.round(Math.min(w, h) * 0.4));
+  c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText((r.name || '？').slice(0, 1), x + w / 2, y + h / 2);
+  c.restore();
+}
+async function photoImage(id, full) {
+  var rec = await dbGet(full ? 'photos' : 'thumbs', id);
+  if (!rec && !full) rec = await dbGet('photos', id);
+  if (!rec) return null;
+  return loadImage(new Blob([rec.buf], { type: rec.type || 'image/jpeg' }));
+}
+function longDate(s) { var d = parseDate(s); return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日'; }
+
+// 景品カード（1件）
+async function drawItemCard(r, opt) {
+  var W = 1080, H = 1350, M = 60, c0 = document.createElement('canvas'); c0.width = W; c0.height = H;
+  var c = c0.getContext('2d');
+  drawBackground(c, W, H); drawBrand(c, M, 52);
+  // 下の文字の部分の高さを先に決める
+  c.font = sFont(800, 60);
+  var nameLines = wrapLines(c, r.name || '（景品名なし）', W - M * 2, 2);
+  var meta = [longDate(r.date), r.machine, opt.shop ? r.shop : ''].filter(Boolean).join('・');
+  var money = opt.cost && r.cost ? '使った金額 ' + yen(r.cost) + '円' + (r.plays ? '（' + r.plays + 'プレイ）' : '') : (r.plays ? r.plays + 'プレイでゲット' : '');
+  var textH = nameLines.length * 76 + 56 + (money ? 60 : 0);
+  var py = 150, ph = H - py - 50 - textH - 60;
+  // 写真
+  c.save(); c.shadowColor = 'rgba(80,40,60,0.18)'; c.shadowBlur = 36; c.shadowOffsetY = 12;
+  c.fillStyle = SC.white; rrect(c, M, py, W - M * 2, ph, 44); c.fill(); c.restore();
+  var im = r.hasPhoto ? await photoImage(r.id, true) : null;
+  if (im) {
+    c.save(); rrect(c, M, py, W - M * 2, ph, 44); c.clip(); drawCover(c, im.img, M, py, W - M * 2, ph); c.restore();
+    URL.revokeObjectURL(im.url);
+  } else drawPlaceholder(c, r, M, py, W - M * 2, ph, 44);
+  // 「ゲット！」の札
+  c.save(); c.font = sFont(800, 36);
+  var tw = c.measureText('ゲット！').width + 56, g = c.createLinearGradient(M + 28, 0, M + 28 + tw, 0);
+  g.addColorStop(0, SC.pri); g.addColorStop(1, SC.pri2);
+  c.shadowColor = 'rgba(0,0,0,0.2)'; c.shadowBlur = 12; c.fillStyle = g; rrect(c, M + 28, py + 28, tw, 64, 32); c.fill();
+  c.shadowColor = 'transparent'; c.fillStyle = '#fff'; c.textBaseline = 'middle'; c.fillText('ゲット！', M + 56, py + 61); c.restore();
+  // 文字
+  var y = py + ph + 50;
+  c.fillStyle = SC.ink; c.font = sFont(800, 60); c.textBaseline = 'top';
+  nameLines.forEach(function (l, i) { c.fillText(l, M, y + i * 76); });
+  y += nameLines.length * 76 + 6;
+  c.fillStyle = SC.sub; c.font = sFont(600, 34); c.fillText(fitText(c, meta, W - M * 2), M, y);
+  if (money) { y += 56; c.fillStyle = SC.pri; c.font = sFont(800, 38); c.fillText(fitText(c, money, W - M * 2), M, y); }
+  var blob = await canvasToBlob(c0, 0.9); releaseCanvas(c0); return blob;
+}
+
+// 月のまとめ
+async function drawMonthCard(ym, opt) {
+  var rs = records.filter(function (r) { return r.got && ymOf(r.date) === ym; }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.createdAt - b.createdAt; });
+  var all = records.filter(function (r) { return ymOf(r.date) === ym; });
+  var cost = all.reduce(function (a, r) { return a + (r.cost || 0); }, 0);
+  var n = rs.length, W = 1080, M = 60, GAP = 16, inner = W - M * 2;
+  var cols = n <= 1 ? 1 : n === 2 ? 2 : n === 3 ? 3 : n === 4 ? 2 : n <= 6 ? 3 : 4;
+  var maxCells = cols === 4 ? 12 : cols * Math.ceil(Math.min(n, 12) / cols);
+  var shown = n > maxCells ? maxCells - 1 : n, more = n - shown;
+  var cells = shown + (more ? 1 : 0), rows = Math.ceil(cells / cols);
+  var cell = Math.floor((inner - GAP * (cols - 1)) / cols);
+  var cellH = cols === 1 ? Math.round(cell * 0.85) : cell;
+  // 数字の枠
+  var tiles = [{ k: 'ゲット数', v: n + '個' }];
+  if (opt.cost) { tiles.push({ k: '使った金額', v: yen(cost) + '円' }); tiles.push({ k: '1個あたり', v: n ? yen(Math.round(cost / n)) + '円' : '—', hl: true }); }
+  else {
+    var pg = rs.filter(function (r) { return r.plays > 0; });
+    if (pg.length) tiles.push({ k: '1個に平均', v: (Math.round(pg.reduce(function (a, r) { return a + r.plays; }, 0) / pg.length * 10) / 10) + 'プレイ', hl: true });
+  }
+  var topShop = null;
+  if (opt.shop) { var gs = groupBy(rs, function (r) { return r.shop; }).filter(function (g) { return g.k !== '（未入力）'; }); topShop = gs[0] || null; }
+  var gridTop = 150 + 90 + 40 + 150 + (topShop ? 76 : 0) + 40;
+  var H = gridTop + rows * cellH + (rows - 1) * GAP + 70;
+  var c0 = document.createElement('canvas'); c0.width = W; c0.height = H; var c = c0.getContext('2d');
+  drawBackground(c, W, H); drawBrand(c, M, 52);
+  var p = ym.split('-');
+  c.fillStyle = SC.ink; c.font = sFont(800, 64); c.textBaseline = 'top'; c.fillText(p[0] + '年' + Number(p[1]) + '月のゲット', M, 150);
+  // 数字の枠を描く
+  var ty = 150 + 90 + 40, tw = (inner - 20 * (tiles.length - 1)) / tiles.length;
+  tiles.forEach(function (t, i) {
+    var x = M + i * (tw + 20);
+    c.save(); c.shadowColor = 'rgba(80,40,60,0.10)'; c.shadowBlur = 20; c.shadowOffsetY = 6;
+    c.fillStyle = t.hl ? '#ffe1e7' : SC.white; rrect(c, x, ty, tw, 150, 28); c.fill(); c.restore();
+    c.fillStyle = SC.sub; c.font = sFont(700, 28); c.fillText(t.k, x + 28, ty + 26);
+    c.fillStyle = t.hl ? SC.pri : SC.ink; var fs = 54; c.font = sFont(800, fs);
+    while (c.measureText(t.v).width > tw - 56 && fs > 30) { fs -= 2; c.font = sFont(800, fs); }
+    c.fillText(t.v, x + 28, ty + 70);
+  });
+  if (topShop) { c.fillStyle = SC.sub; c.font = sFont(700, 32); c.fillText(fitText(c, 'いちばん取ったお店：' + topShop.k + '（' + topShop.gets + '個）', inner), M, ty + 150 + 34); }
+  // 写真を並べる
+  var useFull = cols <= 3;
+  for (var i = 0; i < cells; i++) {
+    var x = M + (i % cols) * (cell + GAP), y = gridTop + Math.floor(i / cols) * (cellH + GAP);
+    if (i === shown) {
+      c.fillStyle = '#ffe1e7'; rrect(c, x, y, cell, cellH, 24); c.fill();
+      c.fillStyle = SC.pri; c.font = sFont(800, Math.round(cell * 0.24)); c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText('+' + more, x + cell / 2, y + cellH / 2); c.textAlign = 'left'; c.textBaseline = 'top';
+      continue;
+    }
+    var r = rs[i], im = r.hasPhoto ? await photoImage(r.id, useFull) : null;
+    if (im) { c.save(); rrect(c, x, y, cell, cellH, 24); c.clip(); drawCover(c, im.img, x, y, cell, cellH); c.restore(); URL.revokeObjectURL(im.url); }
+    else drawPlaceholder(c, r, x, y, cell, cellH, 24);
+    // 名前を下に重ねる
+    var fs2 = Math.min(40, Math.max(22, Math.round(cell * 0.1)));
+    c.save(); rrect(c, x, y, cell, cellH, 24); c.clip();
+    var gg = c.createLinearGradient(0, y + cellH - fs2 * 2.6, 0, y + cellH); gg.addColorStop(0, 'rgba(0,0,0,0)'); gg.addColorStop(1, 'rgba(0,0,0,0.6)');
+    c.fillStyle = gg; c.fillRect(x, y + cellH - fs2 * 2.6, cell, fs2 * 2.6);
+    c.fillStyle = '#fff'; c.font = sFont(700, fs2); c.textBaseline = 'alphabetic';
+    c.fillText(fitText(c, r.name || '', cell - fs2), x + fs2 * 0.5, y + cellH - fs2 * 0.6); c.restore();
+    c.textBaseline = 'top';
+  }
+  var blob = await canvasToBlob(c0, 0.9); releaseCanvas(c0); return blob;
+}
+
+function openShareSheet(kind, arg) {
+  var opt = { cost: settings.shareCost !== false, shop: settings.shareShop === true };
+  var title = kind === 'item' ? '景品を画像で共有' : ymLabel(arg) + 'のまとめを共有';
+  var body =
+    '<img class="share-preview" id="shPrev" alt="共有する画像">' +
+    '<div class="share-opts">' +
+    '<label class="switch-row"><span>金額を載せる</span><input type="checkbox" id="shCost"' + (opt.cost ? ' checked' : '') + '><span class="switch"></span></label>' +
+    '<label class="switch-row"><span>お店の名前を載せる</span><input type="checkbox" id="shShop"' + (opt.shop ? ' checked' : '') + '><span class="switch"></span></label>' +
+    '</div>' +
+    '<p class="hint">「共有する」を押すと共有メニューが開きます。LINEを選ぶと、画像をトークにそのまま送れます。</p>' +
+    '<a class="link small hidden" id="shDl" href="#">共有メニューが出ない場合はこちら（画像を開く）</a>';
+  openSheet(title, body, '<button class="btn primary block" id="shGo" disabled>画像を作っています…</button>');
+  var file = null, url = null, alive = true, gen = 0;
+  sheetCleanup = function () { alive = false; if (url) URL.revokeObjectURL(url); };
+  var name = 'ゲット図鑑_' + (kind === 'item' ? (arg.name || '景品').replace(/[\\/:*?"<>|\s]+/g, '').slice(0, 20) : ymLabel(arg)) + '.jpg';
+  async function build() {
+    var my = ++gen, btn = $('#shGo');
+    btn.disabled = true; btn.textContent = '画像を作っています…';
+    try {
+      var blob = kind === 'item' ? await drawItemCard(arg, opt) : await drawMonthCard(arg, opt);
+      if (!alive || my !== gen) return;
+      if (url) URL.revokeObjectURL(url);
+      url = URL.createObjectURL(blob);
+      try { file = new File([blob], name, { type: 'image/jpeg' }); } catch (e) { file = blob; }
+      $('#shPrev').src = url;
+      var dl = $('#shDl'); dl.href = url; dl.setAttribute('download', name); dl.classList.remove('hidden');
+      btn.disabled = false; btn.textContent = '共有する';
+    } catch (e) { if (alive) { btn.textContent = '画像を作れませんでした'; toast(errMsg(e)); } }
+  }
+  $('#shCost').addEventListener('change', function (e) { opt.cost = e.target.checked; saveSetting('shareCost', opt.cost).catch(function () {}); build(); });
+  $('#shShop').addEventListener('change', function (e) { opt.shop = e.target.checked; saveSetting('shareShop', opt.shop).catch(function () {}); build(); });
+  $('#shGo').addEventListener('click', async function () {
+    if (!file) return;
+    var can = false;
+    try { can = !!(navigator.canShare && navigator.share && navigator.canShare({ files: [file] })); } catch (e) {}
+    if (!can) { $('#shDl').click(); return; }
+    try { await navigator.share({ files: [file] }); }
+    catch (e) { if (!(e && e.name === 'AbortError')) toast('共有メニューを開けませんでした。下のリンクを試してください'); }
+  });
+  build();
 }
 
 /* ===== ZIPファイル（バックアップの入れ物） ===== */
@@ -1389,6 +1616,7 @@ document.addEventListener('click', function (e) {
   else if (act === 'backup') openBackupSheet(a.dataset.kind);
   else if (act === 'restore') $('#restoreFile').click();
   else if (act === 'compress') runCompress();
+  else if (act === 'share-month') openShareSheet('month', a.dataset.ym);
   else if (act === 'reset') openReset();
 });
 $('#btnAdd').addEventListener('click', function () { openForm(null); });
