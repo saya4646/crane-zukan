@@ -299,7 +299,7 @@ body.sheet-open .toast{bottom:calc(env(safe-area-inset-bottom) + 90px)}
 
 <script>
 'use strict';
-var APP_VERSION = '1.1.4';
+var APP_VERSION = '1.1.5';
 var DB_NAME = 'crane-get-zukan';       // 残業メモと混ざらない専用の保存場所
 var BACKUP_APP_ID = 'crane-get-zukan';
 var MACHINES = ['フック', '橋渡し', '3本爪', '2本爪', 'たこ焼き', 'その他'];
@@ -711,7 +711,7 @@ function renderSettings(v) {
     '<div class="set-row"><span>写真の容量</span><b>' + fmtBytes(bytes) + '</b></div>' +
     '<div class="set-row"><span>アプリ全体の使用量（目安）</span><b id="estUsage">確認中…</b></div>' +
     '<div class="set-row" style="border-bottom:0"><span>データの保護</span><b id="persistState">確認中…</b></div>' +
-    '<p class="set-desc" style="margin:0">iPhoneの空き容量がほとんどなくなったときに、iPhoneがこのアプリの記録を自動で削除しないよう、iPhoneにお願いする設定です。受け付けるかどうかはiPhoneが決めます。受け付けられなくても、ふだんの使用には影響ありません。' +
+    '<p class="set-desc" style="margin:0">iPhoneの空き容量がほとんどなくなったときに、iPhoneがこのアプリの記録を自動で削除しないよう、iPhoneにお願いする設定です。受け付けるかどうかはiPhoneが決めます。受け付けられなくても、普段の使用には影響ありません。' +
     (isStandalone() ? '' : '<br>※いまはSafariで開いています。ホーム画面のアイコンから開いた状態で押すと、受け付けられる場合があります。') + '</p>' +
     '</section>' +
 
@@ -725,7 +725,7 @@ function renderSettings(v) {
       : '') +
     '<button class="btn ' + (settings.lastBackupAt ? 'ghost' : 'primary') + ' block" data-act="backup" data-kind="full"' + (records.length ? '' : ' disabled') + '>全部を書き出す（約' + fmtBytes(fullEst) + '）</button>' +
     (months.length ? '<div class="inline" style="margin-top:8px"><select class="inp" id="bkMonth">' + months.map(function (m) { return '<option value="' + m + '">' + ymLabel(m) + '</option>'; }).join('') + '</select><button class="btn ghost" data-act="backup" data-kind="month">この月を書き出す</button></div>' : '') +
-    (fullEst > 400 * 1048576 ? '<p class="hint">全部の書き出しが大きくなっています。ふだんは「前回からの分だけ」、まとめて残すときは「月ごと」がおすすめです。</p>' : '') +
+    (fullEst > 400 * 1048576 ? '<p class="hint">全部の書き出しが大きくなっています。普段は「前回からの分だけ」、まとめて残すときは「月ごと」がおすすめです。</p>' : '') +
     '<p class="hint">「前回からの分だけ」は、1回目の全部の書き出しに足していく形です。戻すときは、全部のファイル、そのあとの差分のファイルの順に取り込んでください。</p>' +
     '</section>' +
 
