@@ -153,12 +153,29 @@ main{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;oversc
 .seg-got button.on.no{background:var(--sub);color:#fff}
 .photo-pick{position:relative;display:block;margin-top:14px;aspect-ratio:4/3;border-radius:16px;border:2px dashed var(--line);background:var(--surface);overflow:hidden;cursor:pointer}
 .photo-pick input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
-.photo-pick img{width:100%;height:100%;object-fit:cover;display:block}
+.photo-pick img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;background:var(--surface2)}
 .photo-pick.has{border-style:solid}
 .photo-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--sub);text-align:center;font-size:13px}
 .photo-empty svg{width:40px;height:40px;color:var(--pri)}
 .photo-empty b{color:var(--ink);font-size:15px}
-.photo-actions{display:flex;justify-content:space-between;margin-top:6px;font-size:13px;min-height:22px}
+.photo-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px;font-size:13px;min-height:22px}
+.pa-mini{display:flex;align-items:center;gap:8px;min-width:0;line-height:1.35}
+.pa-mini img,.pa-mini i{width:48px;height:48px;border-radius:10px;object-fit:cover;flex:none;background:var(--surface2);display:block}
+.pa-btns{display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex:none}
+.pa-btns .link[disabled]{opacity:.4}
+/* 図鑑に出す範囲を決める画面 */
+.cropper{position:fixed;inset:0;z-index:70;background:rgba(20,10,20,.55);display:flex;align-items:center;justify-content:center;padding:calc(env(safe-area-inset-top) + 12px) 12px calc(env(safe-area-inset-bottom) + 12px)}
+.crop-panel{width:100%;max-width:440px;max-height:100%;overflow-y:auto;background:var(--bg);border-radius:20px;padding:16px}
+.crop-title{font-weight:800;text-align:center;font-size:16px}
+.crop-hint{margin:4px 0 12px;font-size:13px;color:var(--sub);text-align:center}
+.crop-view{position:relative;width:100%;aspect-ratio:1/1;border-radius:14px;overflow:hidden;background:#fff;touch-action:none;-webkit-user-select:none;user-select:none;cursor:grab}
+.crop-view img{position:absolute;left:0;top:0;max-width:none;max-height:none;transform-origin:0 0;pointer-events:none;-webkit-user-drag:none}
+.crop-frame{position:absolute;inset:0;border:3px solid var(--pri);border-radius:14px;pointer-events:none}
+.crop-zoom{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12px;color:var(--sub);white-space:nowrap}
+.crop-zoom input{flex:1;min-width:0;accent-color:var(--pri)}
+.crop-quick{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.crop-quick .btn{font-size:13px;padding:9px 6px}
+.crop-foot{display:grid;grid-template-columns:1fr 1.4fr;gap:8px;margin-top:14px}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{padding:8px 14px;border-radius:999px;border:1.5px solid var(--line);background:var(--surface);font-weight:600;font-size:14px}
 .chip.on{background:var(--pri);border-color:var(--pri);color:#fff}
@@ -304,7 +321,7 @@ body.sheet-open .toast{bottom:calc(env(safe-area-inset-bottom) + 90px)}
 
 <script>
 'use strict';
-var APP_VERSION = '1.2.0';
+var APP_VERSION = '1.3.0';
 var DB_NAME = 'crane-get-zukan';       // 残業メモと混ざらない専用の保存場所
 var BACKUP_APP_ID = 'crane-get-zukan';
 var MACHINES = ['フック', '橋渡し', '3本爪', '2本爪', 'たこ焼き', 'その他'];
@@ -391,32 +408,133 @@ function loadImage(blob) {
 function canvasToBlob(c, q) {
   return new Promise(function (res, rej) { c.toBlob(function (b) { b ? res(b) : rej(new Error('写真の変換に失敗しました')); }, 'image/jpeg', q); });
 }
-function drawTo(img, edge, square) {
+/* 図鑑に出す範囲（正方形）
+   crop = { x: 枠の中心の横位置（0〜1）, y: 枠の中心の縦位置（0〜1）, z: 枠の大きさ（写真の短い辺を1とする。大きいほど広く写る） }
+   範囲が決まっていない古い記録は、これまでどおり真ん中を切り抜く（x=0.5, y=0.5, z=1 と同じ） */
+var CROP_ZMIN = 0.25;
+function cropMaxZ(w, h) { return Math.max(w, h) / Math.min(w, h); }
+function fixCrop(w, h, cr) {
+  var m = Math.min(w, h), z = cr && isFinite(cr.z) ? cr.z : 1;
+  z = Math.min(cropMaxZ(w, h), Math.max(CROP_ZMIN, z));
+  var L = z * m, cx = (cr && isFinite(cr.x) ? cr.x : 0.5) * w, cy = (cr && isFinite(cr.y) ? cr.y : 0.5) * h;
+  cx = L >= w ? w / 2 : Math.min(w - L / 2, Math.max(L / 2, cx));
+  cy = L >= h ? h / 2 : Math.min(h - L / 2, Math.max(L / 2, cy));
+  return { x: cx / w, y: cy / h, z: z };
+}
+function drawSquare(img, edge, cr) {
+  var w = img.naturalWidth, h = img.naturalHeight, f = fixCrop(w, h, cr), L = f.z * Math.min(w, h);
+  var size = Math.max(1, Math.round(Math.min(edge, L))), k = size / L, c = document.createElement('canvas'), x = c.getContext('2d');
+  c.width = c.height = size;
+  x.fillStyle = '#ffffff'; x.fillRect(0, 0, size, size);   // 写真全体を入れたときの余白は白
+  x.drawImage(img, (L / 2 - f.x * w) * k, (L / 2 - f.y * h) * k, w * k, h * k);
+  return c;
+}
+function drawTo(img, edge, square, cr) {
+  if (square) return drawSquare(img, edge, cr);
   var w = img.naturalWidth, h = img.naturalHeight, c = document.createElement('canvas'), x = c.getContext('2d');
-  if (square) {
-    var s = Math.min(w, h), size = Math.min(edge, s);
-    c.width = c.height = size;
-    x.drawImage(img, (w - s) / 2, (h - s) / 2, s, s, 0, 0, size, size);
-  } else {
-    var k = Math.min(1, edge / Math.max(w, h));
-    c.width = Math.round(w * k); c.height = Math.round(h * k);
-    x.drawImage(img, 0, 0, c.width, c.height);
-  }
+  var k = Math.min(1, edge / Math.max(w, h));
+  c.width = Math.round(w * k); c.height = Math.round(h * k);
+  x.drawImage(img, 0, 0, c.width, c.height);
   return c;
 }
 function releaseCanvas(c) { c.width = 0; c.height = 0; }
-async function makeImages(file) {
+async function makeFull(file) {
   var r = await loadImage(file);
-  try {
-    var c1 = drawTo(r.img, FULL_EDGE, false); var full = await canvasToBlob(c1, FULL_Q); releaseCanvas(c1);
-    var c2 = drawTo(r.img, THUMB_EDGE, true); var thumb = await canvasToBlob(c2, THUMB_Q); releaseCanvas(c2);
-    return { full: full, thumb: thumb };
-  } finally { URL.revokeObjectURL(r.url); }
-}
-async function resizeBlob(blob, edge, q, square) {
-  var r = await loadImage(blob);
-  try { var c = drawTo(r.img, edge, square); var out = await canvasToBlob(c, q); releaseCanvas(c); return out; }
+  try { var c = drawTo(r.img, FULL_EDGE, false); var full = await canvasToBlob(c, FULL_Q); releaseCanvas(c); return full; }
   finally { URL.revokeObjectURL(r.url); }
+}
+async function resizeBlob(blob, edge, q, square, cr) {
+  var r = await loadImage(blob);
+  try { var c = drawTo(r.img, edge, square, cr); var out = await canvasToBlob(c, q); releaseCanvas(c); return out; }
+  finally { URL.revokeObjectURL(r.url); }
+}
+
+/* ===== 図鑑に出す範囲を決める画面 =====
+   写真を指で動かす・2本の指で広げる／縮める・下のつまみで大きさを変える。
+   決めたら crop を、キャンセルなら null を返す */
+function openCropper(blob, crop) {
+  return loadImage(blob).then(function (r) {
+    return new Promise(function (resolve) {
+      var img = r.img, iw = img.naturalWidth, ih = img.naturalHeight, m = Math.min(iw, ih);
+      var zMax = cropMaxZ(iw, ih), zMin = CROP_ZMIN;
+      var st = fixCrop(iw, ih, crop), cx = st.x * iw, cy = st.y * ih, L = st.z * m;
+      var ov = document.createElement('div'); ov.className = 'cropper';
+      ov.innerHTML = '<div class="crop-panel" role="dialog" aria-modal="true" aria-label="図鑑に出す範囲を決める">' +
+        '<div class="crop-title">図鑑に出す範囲を決める</div>' +
+        '<p class="crop-hint">枠の中が図鑑の一覧に出ます。指で動かすと位置、2本の指で広げる・縮めると大きさが変わります。</p>' +
+        '<div class="crop-view"><img alt="" draggable="false"><div class="crop-frame"></div></div>' +
+        '<div class="crop-zoom"><span>小さく</span><input type="range" min="0" max="1000" step="1" aria-label="大きさ"><span>大きく</span></div>' +
+        '<div class="crop-quick"><button type="button" class="btn ghost" data-act="all">写真全体を入れる</button><button type="button" class="btn ghost" data-act="center">真ん中に戻す</button></div>' +
+        '<div class="crop-foot"><button type="button" class="btn" data-act="cancel">キャンセル</button><button type="button" class="btn primary" data-act="ok">この範囲にする</button></div></div>';
+      document.body.appendChild(ov);
+      var view = ov.querySelector('.crop-view'), pic = ov.querySelector('.crop-view img'), range = ov.querySelector('.crop-zoom input');
+      pic.src = r.url;
+      // つまみ（0〜1000）と枠の大きさ z を対応させる。右へ動かすほど大きく写る
+      function zToRange(z) { return zMax <= zMin ? 0 : Math.round(Math.log(zMax / z) / Math.log(zMax / zMin) * 1000); }
+      function rangeToZ(v) { return zMax * Math.pow(zMin / zMax, v / 1000); }
+      function settle() { var f = fixCrop(iw, ih, { x: cx / iw, y: cy / ih, z: L / m }); cx = f.x * iw; cy = f.y * ih; L = f.z * m; }
+      function draw() {
+        var V = view.clientWidth || 1, k = V / L;
+        pic.style.width = (iw * k) + 'px'; pic.style.height = (ih * k) + 'px';
+        pic.style.transform = 'translate3d(' + (V / 2 - cx * k) + 'px,' + (V / 2 - cy * k) + 'px,0)';
+      }
+      function update(fromRange) { settle(); draw(); if (!fromRange) range.value = zToRange(L / m); }
+      update(false);
+      // 指の動き
+      var pts = new Map(), prev = null;
+      function snap() {
+        var a = Array.from(pts.values()), n = a.length, mx = 0, my = 0;
+        a.forEach(function (p) { mx += p.x; my += p.y; }); mx /= n; my /= n;
+        var d = n > 1 ? Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) : 0;
+        return { n: n, mx: mx, my: my, d: d };
+      }
+      function onDown(e) { e.preventDefault(); try { view.setPointerCapture(e.pointerId); } catch (_) {} pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); prev = snap(); }
+      function onMove(e) {
+        if (!pts.has(e.pointerId)) return;
+        e.preventDefault();
+        pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        var now = snap();
+        if (prev && now.n === prev.n) {
+          var rect = view.getBoundingClientRect(), V = rect.width || 1, ox = rect.left + V / 2, oy = rect.top + V / 2;
+          // 前の指の位置の下にあった写真の点を、今の指の位置に合わせる
+          var px = cx + (prev.mx - ox) * L / V, py = cy + (prev.my - oy) * L / V;
+          if (now.n > 1 && prev.d > 0 && now.d > 0) L = Math.min(zMax * m, Math.max(zMin * m, L * prev.d / now.d));
+          cx = px - (now.mx - ox) * L / V; cy = py - (now.my - oy) * L / V;
+          update(false);
+        }
+        prev = now;
+      }
+      function onUp(e) { pts.delete(e.pointerId); prev = pts.size ? snap() : null; }
+      view.addEventListener('pointerdown', onDown);
+      view.addEventListener('pointermove', onMove);
+      view.addEventListener('pointerup', onUp);
+      view.addEventListener('pointercancel', onUp);
+      function noGesture(e) { e.preventDefault(); }
+      ov.addEventListener('gesturestart', noGesture);   // iPhoneで画面全体が拡大されるのを防ぐ
+      range.addEventListener('input', function () {
+        // つまみで変えるときは、枠の真ん中を中心に大きさを変える
+        L = rangeToZ(Number(range.value)) * m; update(true);
+      });
+      function onResize() { draw(); }
+      window.addEventListener('resize', onResize);
+      function finish(result) {
+        window.removeEventListener('resize', onResize);
+        ov.remove(); URL.revokeObjectURL(r.url); resolve(result);
+      }
+      ov.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-act]'); if (!b) return;
+        var act = b.dataset.act;
+        if (act === 'all') { L = zMax * m; cx = iw / 2; cy = ih / 2; update(false); }
+        else if (act === 'center') { L = m; cx = iw / 2; cy = ih / 2; update(false); }
+        else if (act === 'cancel') finish(null);
+        else if (act === 'ok') {
+          settle();
+          var f = fixCrop(iw, ih, { x: cx / iw, y: cy / ih, z: L / m });
+          finish({ x: Math.round(f.x * 10000) / 10000, y: Math.round(f.y * 10000) / 10000, z: Math.round(f.z * 10000) / 10000 });
+        }
+      });
+    });
+  });
 }
 
 /* ===== 小さい写真の読み込み（見えた分だけ） ===== */
@@ -798,7 +916,8 @@ var ICON_CAM = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strok
 function openForm(rec) {
   var isNew = !rec;
   var r = rec ? Object.assign({}, rec) : { id: uid(), date: todayStr(), got: true, name: '', shop: settings.lastShop || '', machine: settings.lastMachine || '', cost: 0, plays: 0, memo: '', hasPhoto: false };
-  var f = { r: r, isNew: isNew, newPhoto: null, removePhoto: false, busy: false, curURL: null };
+  // newPhoto：新しく選んだ写真 / newCrop：今の写真のまま図鑑に出す範囲だけ変えたもの / curBlob・oldTURL：保存済みの写真と小さい写真
+  var f = { r: r, isNew: isNew, newPhoto: null, newCrop: null, removePhoto: false, busy: false, curURL: null, curBlob: null, oldTURL: null };
   form = f;
   var shops = Array.from(new Set(records.map(function (x) { return x.shop; }).filter(Boolean)));
   var body =
@@ -819,8 +938,10 @@ function openForm(rec) {
     '<div class="field"><label for="fMemo">メモ</label><textarea id="fMemo" rows="3" placeholder="取り方のコツ、一緒に行った人など">' + esc(r.memo) + '</textarea></div>';
   openSheet(isNew ? 'ゲットを記録' : '記録を編集', body, '<button class="btn primary block" id="fSave">' + (isNew ? '記録する' : '変更を保存') + '</button>');
   sheetCleanup = function () {
-    if (f.newPhoto) URL.revokeObjectURL(f.newPhoto.url);
+    if (f.newPhoto) { URL.revokeObjectURL(f.newPhoto.url); URL.revokeObjectURL(f.newPhoto.turl); }
+    if (f.newCrop) URL.revokeObjectURL(f.newCrop.turl);
     if (f.curURL) URL.revokeObjectURL(f.curURL);
+    if (f.oldTURL) URL.revokeObjectURL(f.oldTURL);
     if (form === f) form = null;
   };
   function setGot(g) {
@@ -834,7 +955,12 @@ function openForm(rec) {
   if (!isNew && r.hasPhoto) {
     dbGet('photos', r.id).then(function (p) {
       if (!p || form !== f) return;
-      f.curURL = URL.createObjectURL(new Blob([p.buf], { type: p.type || 'image/jpeg' })); photoUI();
+      f.curBlob = new Blob([p.buf], { type: p.type || 'image/jpeg' });
+      f.curURL = URL.createObjectURL(f.curBlob); photoUI();
+    });
+    dbGet('thumbs', r.id).then(function (t) {
+      if (!t || form !== f) return;
+      f.oldTURL = URL.createObjectURL(new Blob([t.buf], { type: t.type || 'image/jpeg' })); photoUI();
     });
   }
   $$('.seg-got button', sheet).forEach(function (b) { b.addEventListener('click', function () { setGot(b.dataset.got === '1'); }); });
@@ -866,17 +992,48 @@ function openForm(rec) {
     f.busy = true; $('#fSave').disabled = true;
     $('#fPhotoInner').innerHTML = '<div class="photo-empty"><b>写真を整えています…</b></div>';
     try {
-      var im = await makeImages(file);
+      var full = await makeFull(file);
       if (form !== f) return;
-      if (f.newPhoto) URL.revokeObjectURL(f.newPhoto.url);
-      f.newPhoto = { full: im.full, thumb: im.thumb, url: URL.createObjectURL(im.full) };
-      f.removePhoto = false;
+      // 図鑑に出す範囲を決めてもらう（キャンセルなら新しい写真は使わない）
+      var cr = await openCropper(full, null);
+      if (form !== f) return;
+      if (cr) {
+        var thumb = await resizeBlob(full, THUMB_EDGE, THUMB_Q, true, cr);
+        if (form !== f) return;
+        if (f.newPhoto) { URL.revokeObjectURL(f.newPhoto.url); URL.revokeObjectURL(f.newPhoto.turl); }
+        if (f.newCrop) { URL.revokeObjectURL(f.newCrop.turl); f.newCrop = null; }
+        f.newPhoto = { full: full, thumb: thumb, crop: cr, url: URL.createObjectURL(full), turl: URL.createObjectURL(thumb) };
+        f.removePhoto = false;
+      }
     } catch (err) { toast(errMsg(err)); }
     f.busy = false; if (form === f) { $('#fSave').disabled = false; photoUI(); }
   });
+  async function adjustCrop() {
+    var blob = f.newPhoto ? f.newPhoto.full : f.curBlob;
+    if (!blob || f.busy) return;
+    var cur = f.newPhoto ? f.newPhoto.crop : (f.newCrop ? f.newCrop.crop : r.crop);
+    f.busy = true; $('#fSave').disabled = true;
+    try {
+      var cr = await openCropper(blob, cur);
+      if (cr && form === f) {
+        var thumb = await resizeBlob(blob, THUMB_EDGE, THUMB_Q, true, cr);
+        if (form !== f) return;
+        if (f.newPhoto) {
+          URL.revokeObjectURL(f.newPhoto.turl);
+          f.newPhoto.thumb = thumb; f.newPhoto.crop = cr; f.newPhoto.turl = URL.createObjectURL(thumb);
+        } else {
+          if (f.newCrop) URL.revokeObjectURL(f.newCrop.turl);
+          f.newCrop = { thumb: thumb, crop: cr, turl: URL.createObjectURL(thumb) };
+        }
+      }
+    } catch (err) { toast(errMsg(err)); }
+    f.busy = false; if (form === f) { $('#fSave').disabled = false; photoUI(); }
+  }
   $('#fPhotoActs').addEventListener('click', function (e) {
+    if (e.target.closest('[data-adj]')) { adjustCrop(); return; }
     if (e.target.closest('[data-rm]')) {
-      if (f.newPhoto) { URL.revokeObjectURL(f.newPhoto.url); f.newPhoto = null; }
+      if (f.newPhoto) { URL.revokeObjectURL(f.newPhoto.url); URL.revokeObjectURL(f.newPhoto.turl); f.newPhoto = null; }
+      if (f.newCrop) { URL.revokeObjectURL(f.newCrop.turl); f.newCrop = null; }
       if (r.hasPhoto) f.removePhoto = true;
       photoUI();
     }
@@ -890,7 +1047,12 @@ function openForm(rec) {
     $('#fPhotoInner').innerHTML = showing
       ? (url ? '<img src="' + url + '" alt="">' : '<div class="photo-empty"><b>読み込み中…</b></div>')
       : '<div class="photo-empty">' + ICON_CAM + '<b>写真を追加</b>タップすると撮影かアルバムから選べます</div>';
-    $('#fPhotoActs').innerHTML = showing ? '<span class="sub">写真をタップすると変更できます</span><button type="button" class="link" data-rm>写真を外す</button>' : '';
+    var turl = f.newPhoto ? f.newPhoto.turl : (f.newCrop ? f.newCrop.turl : f.oldTURL);
+    var canAdj = !!(f.newPhoto || f.curBlob);
+    $('#fPhotoActs').innerHTML = showing
+      ? '<div class="pa-mini">' + (turl ? '<img src="' + turl + '" alt="">' : '<i></i>') + '<span class="sub">図鑑での見え方<br>写真をタップすると変更できます</span></div>' +
+        '<div class="pa-btns"><button type="button" class="link" data-adj' + (canAdj ? '' : ' disabled') + '>範囲を調整</button><button type="button" class="link" data-rm>写真を外す</button></div>'
+      : '';
   }
 }
 async function saveForm(f) {
@@ -910,8 +1072,12 @@ async function saveForm(f) {
   try {
     if (f.newPhoto) {
       pbuf = await blobToBuf(f.newPhoto.full); tbuf = await blobToBuf(f.newPhoto.thumb);
-      r.hasPhoto = true; r.photoBytes = pbuf.byteLength; r.thumbBytes = tbuf.byteLength; r.photoLight = false;
-    } else if (f.removePhoto) { r.hasPhoto = false; r.photoBytes = 0; r.thumbBytes = 0; r.photoLight = false; }
+      r.hasPhoto = true; r.photoBytes = pbuf.byteLength; r.thumbBytes = tbuf.byteLength; r.photoLight = false; r.crop = f.newPhoto.crop;
+    } else if (f.removePhoto) { r.hasPhoto = false; r.photoBytes = 0; r.thumbBytes = 0; r.photoLight = false; delete r.crop; }
+    else if (f.newCrop && r.hasPhoto) {
+      // 写真はそのままで、図鑑に出す範囲（小さい写真）だけ作り直す
+      tbuf = await blobToBuf(f.newCrop.thumb); r.thumbBytes = tbuf.byteLength; r.crop = f.newCrop.crop;
+    }
     rec = Object.assign({}, r);
     await dbWrite(['records', 'photos', 'thumbs'], function (t) {
       t.objectStore('records').put(rec);
@@ -919,6 +1085,7 @@ async function saveForm(f) {
         t.objectStore('photos').put({ id: rec.id, type: 'image/jpeg', buf: pbuf });
         t.objectStore('thumbs').put({ id: rec.id, type: 'image/jpeg', buf: tbuf });
       } else if (f.removePhoto) { t.objectStore('photos').delete(rec.id); t.objectStore('thumbs').delete(rec.id); }
+      else if (tbuf) { t.objectStore('thumbs').put({ id: rec.id, type: 'image/jpeg', buf: tbuf }); }
     });
   } catch (e) {
     f.busy = false; btn.disabled = false; btn.textContent = f.isNew ? '記録する' : '変更を保存';
@@ -985,9 +1152,12 @@ function rrect(c, x, y, w, h, r) {
   c.lineTo(x + w, y + h - r); c.quadraticCurveTo(x + w, y + h, x + w - r, y + h); c.lineTo(x + r, y + h);
   c.quadraticCurveTo(x, y + h, x, y + h - r); c.lineTo(x, y + r); c.quadraticCurveTo(x, y, x + r, y); c.closePath();
 }
-function drawCover(c, img, x, y, w, h) {
+// 枠いっぱいに写真を広げる。cr（図鑑に出す範囲）があれば、その中心がなるべく真ん中に来るようにする
+function drawCover(c, img, x, y, w, h, cr) {
   var iw = img.naturalWidth, ih = img.naturalHeight, k = Math.max(w / iw, h / ih), sw = w / k, sh = h / k;
-  c.drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, x, y, w, h);
+  var fx = cr && isFinite(cr.x) ? cr.x : 0.5, fy = cr && isFinite(cr.y) ? cr.y : 0.5;
+  var sx = Math.min(iw - sw, Math.max(0, fx * iw - sw / 2)), sy = Math.min(ih - sh, Math.max(0, fy * ih - sh / 2));
+  c.drawImage(img, sx, sy, sw, sh, x, y, w, h);
 }
 // 日本語を1文字ずつ見て、幅に収まるよう行を分ける（はみ出す最後の行は…で省略）
 var NO_START = '、。，．・：；？！）」』】〕〉》ーぁぃぅぇぉっゃゅょァィゥェォッャュョ…!?)]}';
@@ -1068,7 +1238,7 @@ async function drawItemCard(r, opt) {
   c.fillStyle = SC.white; rrect(c, M, py, W - M * 2, ph, 44); c.fill(); c.restore();
   var im = r.hasPhoto ? await photoImage(r.id, true) : null;
   if (im) {
-    c.save(); rrect(c, M, py, W - M * 2, ph, 44); c.clip(); drawCover(c, im.img, M, py, W - M * 2, ph); c.restore();
+    c.save(); rrect(c, M, py, W - M * 2, ph, 44); c.clip(); drawCover(c, im.img, M, py, W - M * 2, ph, r.crop); c.restore();
     URL.revokeObjectURL(im.url);
   } else drawPlaceholder(c, r, M, py, W - M * 2, ph, 44);
   // 「ゲット！」の札
@@ -1137,7 +1307,7 @@ async function drawMonthCard(ym, opt) {
       continue;
     }
     var r = rs[i], im = r.hasPhoto ? await photoImage(r.id, useFull) : null;
-    if (im) { c.save(); rrect(c, x, y, cell, cellH, 24); c.clip(); drawCover(c, im.img, x, y, cell, cellH); c.restore(); URL.revokeObjectURL(im.url); }
+    if (im) { c.save(); rrect(c, x, y, cell, cellH, 24); c.clip(); drawCover(c, im.img, x, y, cell, cellH, useFull ? r.crop : null); c.restore(); URL.revokeObjectURL(im.url); }
     else drawPlaceholder(c, r, x, y, cell, cellH, 24);
     // 名前を下に重ねる
     var fs2 = Math.min(40, Math.max(22, Math.round(cell * 0.1)));
@@ -1454,7 +1624,7 @@ async function applyRestore(z, data, onProg) {
       if (r.hasPhoto) {
         pbuf = await z.read('photos/' + r.id + '.jpg');
         tbuf = await z.read('thumbs/' + r.id + '.jpg');
-        if (pbuf && !tbuf) { tbuf = await blobToBuf(await resizeBlob(new Blob([pbuf], { type: 'image/jpeg' }), THUMB_EDGE, THUMB_Q, true)); }
+        if (pbuf && !tbuf) { tbuf = await blobToBuf(await resizeBlob(new Blob([pbuf], { type: 'image/jpeg' }), THUMB_EDGE, THUMB_Q, true, r.crop)); }
         if (!pbuf) { r.hasPhoto = false; r.photoBytes = 0; r.thumbBytes = 0; }
         else { r.photoBytes = pbuf.byteLength; r.thumbBytes = tbuf.byteLength; }
       }
