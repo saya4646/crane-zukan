@@ -325,7 +325,7 @@ body.sheet-open .toast{bottom:calc(env(safe-area-inset-bottom) + 90px)}
 
 <script>
 'use strict';
-var APP_VERSION = '1.4.0';
+var APP_VERSION = '1.4.1';
 var DB_NAME = 'crane-get-zukan';       // 残業メモと混ざらない専用の保存場所
 var BACKUP_APP_ID = 'crane-get-zukan';
 var MACHINES = ['フック', '橋渡し', '3本爪', '2本爪', 'たこ焼き', 'その他'];
@@ -1144,12 +1144,11 @@ function rrect(c, x, y, w, h, r) {
   c.lineTo(x + w, y + h - r); c.quadraticCurveTo(x + w, y + h, x + w - r, y + h); c.lineTo(x + r, y + h);
   c.quadraticCurveTo(x, y + h, x, y + h - r); c.lineTo(x, y + r); c.quadraticCurveTo(x, y, x + r, y); c.closePath();
 }
-// 枠いっぱいに写真を広げる。cr（図鑑に出す範囲）があれば、その中心がなるべく真ん中に来るようにする
-function drawCover(c, img, x, y, w, h, cr) {
-  var iw = img.naturalWidth, ih = img.naturalHeight, k = Math.max(w / iw, h / ih), sw = w / k, sh = h / k;
-  var fx = cr && isFinite(cr.x) ? cr.x : 0.5, fy = cr && isFinite(cr.y) ? cr.y : 0.5;
-  var sx = Math.min(iw - sw, Math.max(0, fx * iw - sw / 2)), sy = Math.min(ih - sh, Math.max(0, fy * ih - sh / 2));
-  c.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+// 写真を切らずに枠の中へ収める（画面での表示と同じ。あまった部分は白）
+function drawContain(c, img, x, y, w, h) {
+  var iw = img.naturalWidth, ih = img.naturalHeight, k = Math.min(w / iw, h / ih), dw = iw * k, dh = ih * k;
+  c.fillStyle = '#ffffff'; c.fillRect(x, y, w, h);
+  c.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
 }
 // 日本語を1文字ずつ見て、幅に収まるよう行を分ける（はみ出す最後の行は…で省略）
 var NO_START = '、。，．・：；？！）」』】〕〉》ーぁぃぅぇぉっゃゅょァィゥェォッャュョ…!?)]}';
@@ -1230,7 +1229,7 @@ async function drawItemCard(r, opt) {
   c.fillStyle = SC.white; rrect(c, M, py, W - M * 2, ph, 44); c.fill(); c.restore();
   var im = r.hasPhoto ? await photoImage(r.id, true) : null;
   if (im) {
-    c.save(); rrect(c, M, py, W - M * 2, ph, 44); c.clip(); drawCover(c, im.img, M, py, W - M * 2, ph, r.crop); c.restore();
+    c.save(); rrect(c, M, py, W - M * 2, ph, 44); c.clip(); drawContain(c, im.img, M, py, W - M * 2, ph); c.restore();
     URL.revokeObjectURL(im.url);
   } else drawPlaceholder(c, r, M, py, W - M * 2, ph, 44);
   // 「ゲット！」の札
@@ -1299,7 +1298,7 @@ async function drawMonthCard(ym, opt) {
       continue;
     }
     var r = rs[i], im = r.hasPhoto ? await photoImage(r.id, useFull) : null;
-    if (im) { c.save(); rrect(c, x, y, cell, cellH, 24); c.clip(); drawCover(c, im.img, x, y, cell, cellH, useFull ? r.crop : null); c.restore(); URL.revokeObjectURL(im.url); }
+    if (im) { c.save(); rrect(c, x, y, cell, cellH, 24); c.clip(); drawContain(c, im.img, x, y, cell, cellH); c.restore(); URL.revokeObjectURL(im.url); }
     else drawPlaceholder(c, r, x, y, cell, cellH, 24);
     // 名前を下に重ねる
     var fs2 = Math.min(40, Math.max(22, Math.round(cell * 0.1)));

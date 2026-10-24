@@ -2,7 +2,7 @@
 // 同じGitHubアカウントの残業メモと場所を共有するため、
 // 「crane-zukan-」で始まる自分の保管分だけを扱い、ほかのアプリの分には触れない。
 var CACHE_PREFIX = "crane-zukan-";
-var CACHE_NAME = CACHE_PREFIX + "v12";
+var CACHE_NAME = CACHE_PREFIX + "v13";
 var FILES = [
   "./",
   "./index.html",
